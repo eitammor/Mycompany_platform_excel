@@ -62,6 +62,7 @@ CLEAN_MANUAL_MAP: Dict[str, str] = {
     "ולדימיר שייגנדרוב": "אסף גונן",
     "שייגנדרוב": "אסף גונן",
     "ולדימיר": "אסף גונן",
+    "אורית וידל": "אילן קאופמן",  # Added mapping for Orit Vidal
 }
 
 # Columns to sum in the totals row
