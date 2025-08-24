@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: mycompany-platform
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app
