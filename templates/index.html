@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>מערכת עיבוד דוחות רו"ח</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            direction: rtl;
+        }
+        
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .upload-form {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .file-input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .file-input-group label {
+            font-weight: bold;
+            color: #34495e;
+        }
+        
+        .file-input {
+            padding: 10px;
+            border: 2px dashed #bdc3c7;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+        
+        .file-input:hover {
+            border-color: #3498db;
+        }
+        
+        .file-input:focus {
+            outline: none;
+            border-color: #2980b9;
+        }
+        
+        .submit-btn {
+            background-color: #3498db;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .submit-btn:hover {
+            background-color: #2980b9;
+        }
+        
+        .submit-btn:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+        
+        .error-message {
+            color: #e74c3c;
+            background-color: #fdf2f2;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #f5c6cb;
+            display: none;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            color: #7f8c8d;
+        }
+        
+        .instructions {
+            background-color: #e8f4fd;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #3498db;
+            margin-bottom: 20px;
+        }
+        
+        .instructions h3 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        
+        .instructions ul {
+            margin: 10px 0;
+            padding-right: 20px;
+        }
+        
+        .instructions li {
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>מערכת עיבוד דוחות רו"ח</h1>
+        
+        <div class="instructions">
+            <h3>הוראות שימוש:</h3>
+            <ul>
+                <li>העלה קובץ Excel (.xlsx) המכיל את העמודות הנדרשות</li>
+                <li>המערכת תזהה אוטומטית את שמות הרו"ח מתיאור התשלום</li>
+                <li>תקבל קובץ ZIP עם דוח נפרד לכל רו"ח</li>
+                <li>שורות ללא זיהוי רו"ח יועברו לקובץ "לא מזוהה"</li>
+            </ul>
+        </div>
+        
+        <form class="upload-form" action="/upload" method="post" enctype="multipart/form-data" id="uploadForm">
+            <div class="file-input-group">
+                <label for="file">בחר קובץ Excel:</label>
+                <input type="file" id="file" name="file" accept=".xlsx" class="file-input" required>
+            </div>
+            
+            <button type="submit" class="submit-btn" id="submitBtn">
+                העלה ועבד
+            </button>
+        </form>
+        
+        <div class="error-message" id="errorMessage"></div>
+        <div class="loading" id="loading">מעבד את הקובץ...</div>
+    </div>
+
+    <script>
+        const form = document.getElementById('uploadForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const errorMessage = document.getElementById('errorMessage');
+        const loading = document.getElementById('loading');
+        const fileInput = document.getElementById('file');
+
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(form);
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                showError('אנא בחר קובץ');
+                return;
+            }
+            
+            if (!file.name.toLowerCase().endsWith('.xlsx')) {
+                showError('רק קבצי Excel (.xlsx) נתמכים');
+                return;
+            }
+            
+            // Show loading state
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'מעבד...';
+            loading.style.display = 'block';
+            hideError();
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    // Download the ZIP file
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'דוחות-רו"ח.zip';
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                    
+                    // Reset form
+                    form.reset();
+                } else {
+                    // Handle error response
+                    const errorData = await response.json();
+                    showError(errorData.error || 'שגיאה לא ידועה');
+                }
+            } catch (error) {
+                showError('שגיאה בחיבור לשרת');
+            } finally {
+                // Reset loading state
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'העלה ועבד';
+                loading.style.display = 'none';
+            }
+        });
+        
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+        }
+        
+        function hideError() {
+            errorMessage.style.display = 'none';
+        }
+        
+        // Clear error when file is selected
+        fileInput.addEventListener('change', hideError);
+    </script>
+</body>
+</html>
