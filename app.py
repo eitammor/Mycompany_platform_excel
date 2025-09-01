@@ -62,7 +62,18 @@ CLEAN_MANUAL_MAP: Dict[str, str] = {
     "ולדימיר שייגנדרוב": "אסף גונן",
     "שייגנדרוב": "אסף גונן",
     "ולדימיר": "אסף גונן",
-    "אורית וידל": "אילן קאופמן",  # Added mapping for Orit Vidal
+    "אורית וידל": "אילן קאופמן",
+    "ויטל חיים נהרדעה": "חיים יעקובזון",  # Added mapping
+    "ויטל נהרדעה": "חיים יעקובזון",  # Alternative variant
+    "ויטל חיים": "חיים יעקובזון",  # Another variant
+}
+
+# Business names that should be excluded (legal services, not accountant services)
+EXCLUDED_BUSINESSES = {
+    "אי.די סייבר סולושנס",
+    "אי די סייבר סולושנס",
+    "ID Cyber Solutions",
+    "I.D Cyber Solutions",
 }
 
 # Columns to sum in the totals row
@@ -115,6 +126,20 @@ def normalize_text(text: str) -> str:
     return s
 
 
+def is_excluded_business(row) -> bool:
+    """Check if the business name is in the excluded list."""
+    business_name = str(row.get("שם העסק", "")).strip()
+    if not business_name:
+        return False
+    
+    # Normalize for comparison
+    business_norm = normalize_text(business_name)
+    for excluded in EXCLUDED_BUSINESSES:
+        if normalize_text(excluded) == business_norm:
+            return True
+    return False
+
+
 # ===== Extraction from description =====
 
 def extract_accountant_after_dash(description: str) -> str:
@@ -160,8 +185,14 @@ def find_core_for_person(person_raw: str) -> str:
         return ""
     person_norm = normalize_text(person_raw)
     
+    # Check all possible matches
     for person, core in CLEAN_MANUAL_MAP.items():
-        if normalize_text(person) == person_norm:
+        person_map_norm = normalize_text(person)
+        # Check exact match
+        if person_map_norm == person_norm:
+            return core
+        # Check if the mapped person is contained in the raw person (for partial matches)
+        if person_map_norm in person_norm or person_norm in person_map_norm:
             return core
     return ""
 
@@ -328,9 +359,19 @@ def upload_file():
             df = df[df["תיאור התשלום"].notna()]
             df = df[df["תיאור התשלום"].str.strip() != ""]
 
+        # Filter out excluded businesses (legal services)
+        excluded_mask = df.apply(is_excluded_business, axis=1)
+        excluded_rows = df[excluded_mask]
+        if not excluded_rows.empty:
+            print(f"Excluding {len(excluded_rows)} rows from excluded businesses:")
+            for _, row in excluded_rows.iterrows():
+                print(f"  - {row['שם העסק']}: {row.get('שם', '')} {row.get('משפחה', '')}")
+        
+        df = df[~excluded_mask].copy()
+        print(f"Continuing with {len(df)} rows after exclusions")
+
         # Build person name used for manual mapping
         df["person_raw"] = df.apply(get_person_raw, axis=1)
-
 
         # --- Phase split by manual mapping
         df["core_target"] = df["person_raw"].apply(find_core_for_person)
@@ -368,8 +409,8 @@ def upload_file():
                 lambda core: resolve_target_full_name(core, phase1_full_names)
             )
             print("Phase 2 final mappings:")
-            for _, row in df_phase2[["core_target", "accountant_final"]].iterrows():
-                print(f"  {row['core_target']} -> {row['accountant_final']}")
+            for _, row in df_phase2[["person_raw", "core_target", "accountant_final"]].drop_duplicates().iterrows():
+                print(f"  {row['person_raw']} -> {row['core_target']} -> {row['accountant_final']}")
 
         # Merge both phases
         if not df_phase1.empty or not df_phase2.empty:
@@ -399,12 +440,11 @@ def upload_file():
             ILAN_TARGET_ZIP_NAME = 'רו״ח אילן קאופמן.xlsx'
 
             # Variants that should be merged into a single Aaron Pardo file
-            # Include both spellings: פארדו and פרדו
             AARON_DISPLAY_VARIANTS = {
                 'רו"ח אהרון פארדו',
                 'רו"ח אהרון פרדו',
-                'רו״ח אהרון פארדו',  # with Hebrew quotes
-                'רו״ח אהרון פרדו',   # with Hebrew quotes
+                'רו״ח אהרון פארדו',
+                'רו״ח אהרון פרדו',
                 'אהרון פארדו',
                 'אהרון פרדו',
             }
@@ -413,7 +453,10 @@ def upload_file():
             ilan_parts = []
             aaron_parts = []
 
-            for acc_name, group in df_final.groupby("accountant_final"):
+            # Group and process accountants
+            grouped = df_final.groupby("accountant_final")
+            
+            for acc_name, group in grouped:
                 group_data = group[REQUIRED_COLUMNS].copy()
 
                 # Normalize the accountant name for comparison
@@ -426,13 +469,11 @@ def upload_file():
                         is_ilan = True
                         break
                 
-                # Check for Aaron variants - check both spellings
+                # Check for Aaron variants
                 is_aaron = False
-                # Check if it contains "אהרון" and either "פארדו" or "פרדו"
                 if "אהרון" in acc_name and ("פארדו" in acc_name or "פרדו" in acc_name):
                     is_aaron = True
                 else:
-                    # Also check against the normalized variants
                     for variant in AARON_DISPLAY_VARIANTS:
                         if normalize_text(variant) == acc_normalized:
                             is_aaron = True
@@ -441,13 +482,13 @@ def upload_file():
                 if is_ilan:
                     # Collect for Ilan merge; don't write individual files
                     ilan_parts.append(group_data)
-                    print(f"  Adding to Ilan merge: {acc_name}")
+                    print(f"  Adding to Ilan merge: {acc_name} ({len(group_data)} rows)")
                     continue
 
                 if is_aaron:
                     # Collect for Aaron merge; don't write individual files
                     aaron_parts.append(group_data)
-                    print(f"  Adding to Aaron merge: {acc_name}")
+                    print(f"  Adding to Aaron merge: {acc_name} ({len(group_data)} rows)")
                     continue
 
                 # Normal path - write individual file
@@ -457,7 +498,7 @@ def upload_file():
                     group_data.to_excel(writer, index=False, sheet_name="Sheet1")
                 excel_buf.seek(0)
                 zf.writestr(f"{sanitize_filename(acc_name)}.xlsx", excel_buf.getvalue())
-                print(f"  Writing individual file: {sanitize_filename(acc_name)}.xlsx")
+                print(f"  Writing individual file: {sanitize_filename(acc_name)}.xlsx ({len(group_data)-1} rows)")
 
             # Write merged Ilan file (if any)
             if ilan_parts:
@@ -468,7 +509,7 @@ def upload_file():
                     ilan_df.to_excel(writer, index=False, sheet_name="Sheet1")
                 excel_buf.seek(0)
                 zf.writestr(ILAN_TARGET_ZIP_NAME, excel_buf.getvalue())
-                print(f"Created merged Ilan file with {len(ilan_parts)} groups")
+                print(f"Created merged Ilan file with {len(ilan_parts)} groups, {len(ilan_df)-1} total rows")
 
             # Write merged Aaron file (if any)
             if aaron_parts:
@@ -479,22 +520,25 @@ def upload_file():
                     aaron_df.to_excel(writer, index=False, sheet_name="Sheet1")
                 excel_buf.seek(0)
                 zf.writestr(AARON_TARGET_ZIP_NAME, excel_buf.getvalue())
-                print(f"Created merged Aaron file with {len(aaron_parts)} groups")
+                print(f"Created merged Aaron file with {len(aaron_parts)} groups, {len(aaron_df)-1} total rows")
 
             # Keep mapping summaries as-is
             df_final["source"] = np.where(df_final.get("core_target", "") != "", "manual", "auto")
 
-            # Consolidate Ilan variants in the summary
+            # Consolidate variants in the summary
             df_summary = df_final.copy()
+            
+            # Consolidate Ilan variants
             ilan_mask = df_summary["accountant_final"].isin(ILAN_DISPLAY_VARIANTS)
             df_summary.loc[ilan_mask, "accountant_final"] = 'רו״ח אילן קאופמן'
 
-            # Consolidate Aaron variants in the summary - check both spellings
+            # Consolidate Aaron variants
             aaron_mask = (df_summary["accountant_final"].str.contains("אהרון", na=False) & 
                          (df_summary["accountant_final"].str.contains("פארדו", na=False) | 
                           df_summary["accountant_final"].str.contains("פרדו", na=False)))
             df_summary.loc[aaron_mask, "accountant_final"] = 'רו״ח אהרון פארדו'
 
+            # Create summary by accountant
             summary_by_accountant = (
                 df_summary.groupby(["accountant_final", "source"], as_index=False)
                         .agg(
@@ -505,22 +549,36 @@ def upload_file():
                             transfer_sum=("להעברה", "sum"),
                         )
             )
-            csv1 = io.BytesIO(); csv1.write('\ufeff'.encode('utf-8'))
-            summary_by_accountant.to_csv(csv1, index=False, encoding="utf-8"); csv1.seek(0)
+            csv1 = io.BytesIO()
+            csv1.write('\ufeff'.encode('utf-8'))
+            summary_by_accountant.to_csv(csv1, index=False, encoding="utf-8")
+            csv1.seek(0)
             zf.writestr("mapping_summary_by_accountant.csv", csv1.getvalue())
 
+            # Create manual mappings summary
             mapped_people = (
                 df_summary[df_summary["source"] == "manual"]
                 [["person_raw", "accountant_final"]]
                 .drop_duplicates()
                 .rename(columns={"person_raw": "person", "accountant_final": "target_accountant"})
             )
-            csv2 = io.BytesIO(); csv2.write('\ufeff'.encode('utf-8'))
-            mapped_people.to_csv(csv2, index=False, encoding="utf-8"); csv2.seek(0)
+            csv2 = io.BytesIO()
+            csv2.write('\ufeff'.encode('utf-8'))
+            mapped_people.to_csv(csv2, index=False, encoding="utf-8")
+            csv2.seek(0)
             zf.writestr("mapping_people_manual.csv", csv2.getvalue())
 
+            # Add excluded businesses report if any were excluded
+            if not excluded_rows.empty:
+                excluded_summary = excluded_rows[["שם העסק", "שם", "משפחה", "תיאור התשלום"]].copy()
+                excluded_summary["סיבת אי הכללה"] = "שירות משפטי - לא שירות רו״ח"
+                csv3 = io.BytesIO()
+                csv3.write('\ufeff'.encode('utf-8'))
+                excluded_summary.to_csv(csv3, index=False, encoding="utf-8")
+                csv3.seek(0)
+                zf.writestr("excluded_businesses.csv", csv3.getvalue())
+                print(f"Added excluded businesses report with {len(excluded_rows)} rows")
 
-        
         zip_buffer.seek(0)
         print("ZIP file prepared successfully, returning to client")
         return send_file(
