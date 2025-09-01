@@ -68,15 +68,13 @@ CLEAN_MANUAL_MAP: Dict[str, str] = {
     "ויטל חיים": "חיים יעקובזון",  # Another variant
 }
 
-# Business names that should be excluded (legal services, not accountant services)
-EXCLUDED_BUSINESSES = {
-    "אי.די סייבר סולושנס",
-    "אי די סייבר סולושנס",
-    "ID Cyber Solutions",
-    "I.D Cyber Solutions",
-    "אי.די. סייבר סולושנס",
-    "אי. די סייבר סולושנס",
-    "אי. די. סייבר סולושנס",
+# Person names that should be excluded (legal services, not accountant services)
+EXCLUDED_PERSONS = {
+    ("אי.די", "סייבר סולושנס בע\"מ"),
+    ("אי די", "סייבר סולושנס בע\"מ"),
+    ("אי.די.", "סייבר סולושנס בע\"מ"),
+    ("אי. די", "סייבר סולושנס בע\"מ"),
+    ("אי. די.", "סייבר סולושנס בע\"מ"),
 }
 
 # Columns to sum in the totals row
@@ -129,39 +127,26 @@ def normalize_text(text: str) -> str:
     return s
 
 
-def is_excluded_business(row) -> bool:
-    """Check if the business name OR person name is in the excluded list."""
-    # Check business name field
-    business_name = str(row.get("שם העסק", "")).strip()
-    if business_name:
-        business_norm = normalize_text(business_name)
-        for excluded in EXCLUDED_BUSINESSES:
-            if normalize_text(excluded) == business_norm:
-                return True
-    
-    # Check if it's in the person name fields (שם + משפחה)
+def is_excluded_person(row) -> bool:
+    """Check if the person name (שם + משפחה) is in the excluded list."""
     first = str(row.get("שם", "")).strip()
     last = str(row.get("משפחה", "")).strip()
     
-    # Check combined name
-    if first and last:
-        combined_name = f"{first} {last}"
-        combined_norm = normalize_text(combined_name)
-        for excluded in EXCLUDED_BUSINESSES:
-            if normalize_text(excluded) == combined_norm:
-                return True
+    if not first or not last:
+        return False
     
-    # Also check individual parts in case it's split differently
-    if first:
-        first_norm = normalize_text(first)
-        for excluded in EXCLUDED_BUSINESSES:
-            excluded_norm = normalize_text(excluded)
-            if excluded_norm.startswith(first_norm) or first_norm in excluded_norm:
-                # Check if last name completes the match
-                if last:
-                    last_norm = normalize_text(last)
-                    if excluded_norm.endswith(last_norm) or last_norm in excluded_norm:
-                        return True
+    # Normalize the person name parts
+    first_norm = normalize_text(first)
+    last_norm = normalize_text(last)
+    
+    # Check against excluded person combinations
+    for excluded_first, excluded_last in EXCLUDED_PERSONS:
+        excluded_first_norm = normalize_text(excluded_first)
+        excluded_last_norm = normalize_text(excluded_last)
+        
+        # Check if both first and last names match
+        if first_norm == excluded_first_norm and last_norm == excluded_last_norm:
+            return True
     
     return False
 
@@ -385,11 +370,11 @@ def upload_file():
             df = df[df["תיאור התשלום"].notna()]
             df = df[df["תיאור התשלום"].str.strip() != ""]
 
-        # Filter out excluded businesses (legal services)
-        excluded_mask = df.apply(is_excluded_business, axis=1)
+        # Filter out excluded persons (legal services)
+        excluded_mask = df.apply(is_excluded_person, axis=1)
         excluded_rows = df[excluded_mask]
         if not excluded_rows.empty:
-            print(f"Excluding {len(excluded_rows)} rows from excluded businesses:")
+            print(f"Excluding {len(excluded_rows)} rows from excluded persons:")
             for _, row in excluded_rows.iterrows():
                 business = row.get('שם העסק', '')
                 first = row.get('שם', '')
@@ -597,7 +582,7 @@ def upload_file():
             csv2.seek(0)
             zf.writestr("mapping_people_manual.csv", csv2.getvalue())
 
-            # Add excluded businesses report if any were excluded
+            # Add excluded persons report if any were excluded
             if not excluded_rows.empty:
                 excluded_summary = excluded_rows[["שם העסק", "שם", "משפחה", "תיאור התשלום"]].copy()
                 excluded_summary["סיבת אי הכללה"] = "שירות משפטי - לא שירות רו״ח"
@@ -605,8 +590,8 @@ def upload_file():
                 csv3.write('\ufeff'.encode('utf-8'))
                 excluded_summary.to_csv(csv3, index=False, encoding="utf-8")
                 csv3.seek(0)
-                zf.writestr("excluded_businesses.csv", csv3.getvalue())
-                print(f"Added excluded businesses report with {len(excluded_rows)} rows")
+                zf.writestr("excluded_persons.csv", csv3.getvalue())
+                print(f"Added excluded persons report with {len(excluded_rows)} rows")
 
         zip_buffer.seek(0)
         print("ZIP file prepared successfully, returning to client")
