@@ -74,6 +74,9 @@ EXCLUDED_BUSINESSES = {
     "אי די סייבר סולושנס",
     "ID Cyber Solutions",
     "I.D Cyber Solutions",
+    "אי.די. סייבר סולושנס",
+    "אי. די סייבר סולושנס",
+    "אי. די. סייבר סולושנס",
 }
 
 # Columns to sum in the totals row
@@ -127,16 +130,39 @@ def normalize_text(text: str) -> str:
 
 
 def is_excluded_business(row) -> bool:
-    """Check if the business name is in the excluded list."""
+    """Check if the business name OR person name is in the excluded list."""
+    # Check business name field
     business_name = str(row.get("שם העסק", "")).strip()
-    if not business_name:
-        return False
+    if business_name:
+        business_norm = normalize_text(business_name)
+        for excluded in EXCLUDED_BUSINESSES:
+            if normalize_text(excluded) == business_norm:
+                return True
     
-    # Normalize for comparison
-    business_norm = normalize_text(business_name)
-    for excluded in EXCLUDED_BUSINESSES:
-        if normalize_text(excluded) == business_norm:
-            return True
+    # Check if it's in the person name fields (שם + משפחה)
+    first = str(row.get("שם", "")).strip()
+    last = str(row.get("משפחה", "")).strip()
+    
+    # Check combined name
+    if first and last:
+        combined_name = f"{first} {last}"
+        combined_norm = normalize_text(combined_name)
+        for excluded in EXCLUDED_BUSINESSES:
+            if normalize_text(excluded) == combined_norm:
+                return True
+    
+    # Also check individual parts in case it's split differently
+    if first:
+        first_norm = normalize_text(first)
+        for excluded in EXCLUDED_BUSINESSES:
+            excluded_norm = normalize_text(excluded)
+            if excluded_norm.startswith(first_norm) or first_norm in excluded_norm:
+                # Check if last name completes the match
+                if last:
+                    last_norm = normalize_text(last)
+                    if excluded_norm.endswith(last_norm) or last_norm in excluded_norm:
+                        return True
+    
     return False
 
 
@@ -365,7 +391,10 @@ def upload_file():
         if not excluded_rows.empty:
             print(f"Excluding {len(excluded_rows)} rows from excluded businesses:")
             for _, row in excluded_rows.iterrows():
-                print(f"  - {row['שם העסק']}: {row.get('שם', '')} {row.get('משפחה', '')}")
+                business = row.get('שם העסק', '')
+                first = row.get('שם', '')
+                last = row.get('משפחה', '')
+                print(f"  - Business: '{business}' | Name: '{first}' '{last}'")
         
         df = df[~excluded_mask].copy()
         print(f"Continuing with {len(df)} rows after exclusions")
