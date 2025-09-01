@@ -68,13 +68,9 @@ CLEAN_MANUAL_MAP: Dict[str, str] = {
     "ויטל חיים": "חיים יעקובזון",  # Another variant
 }
 
-# Person names that should be excluded (legal services, not accountant services)
-EXCLUDED_PERSONS = {
-    ("אי.די", "סייבר סולושנס בע\"מ"),
-    ("אי די", "סייבר סולושנס בע\"מ"),
-    ("אי.די.", "סייבר סולושנס בע\"מ"),
-    ("אי. די", "סייבר סולושנס בע\"מ"),
-    ("אי. די.", "סייבר סולושנס בע\"מ"),
+# Email addresses that should be excluded (legal services, not accountant services)
+EXCLUDED_EMAILS = {
+    "maor@sikreta.com",
 }
 
 # Columns to sum in the totals row
@@ -127,28 +123,15 @@ def normalize_text(text: str) -> str:
     return s
 
 
-def is_excluded_person(row) -> bool:
-    """Check if the person name (שם + משפחה) is in the excluded list."""
-    first = str(row.get("שם", "")).strip()
-    last = str(row.get("משפחה", "")).strip()
+def is_excluded_email(row) -> bool:
+    """Check if the email address is in the excluded list."""
+    email = str(row.get("אימייל", "")).strip().lower()
     
-    if not first or not last:
+    if not email:
         return False
     
-    # Normalize the person name parts
-    first_norm = normalize_text(first)
-    last_norm = normalize_text(last)
-    
-    # Check against excluded person combinations
-    for excluded_first, excluded_last in EXCLUDED_PERSONS:
-        excluded_first_norm = normalize_text(excluded_first)
-        excluded_last_norm = normalize_text(excluded_last)
-        
-        # Check if both first and last names match
-        if first_norm == excluded_first_norm and last_norm == excluded_last_norm:
-            return True
-    
-    return False
+    # Check against excluded email addresses
+    return email in EXCLUDED_EMAILS
 
 
 # ===== Extraction from description =====
@@ -370,16 +353,17 @@ def upload_file():
             df = df[df["תיאור התשלום"].notna()]
             df = df[df["תיאור התשלום"].str.strip() != ""]
 
-        # Filter out excluded persons (legal services)
-        excluded_mask = df.apply(is_excluded_person, axis=1)
+        # Filter out excluded emails (legal services)
+        excluded_mask = df.apply(is_excluded_email, axis=1)
         excluded_rows = df[excluded_mask]
         if not excluded_rows.empty:
-            print(f"Excluding {len(excluded_rows)} rows from excluded persons:")
+            print(f"Excluding {len(excluded_rows)} rows from excluded emails:")
             for _, row in excluded_rows.iterrows():
                 business = row.get('שם העסק', '')
                 first = row.get('שם', '')
                 last = row.get('משפחה', '')
-                print(f"  - Business: '{business}' | Name: '{first}' '{last}'")
+                email = row.get('אימייל', '')
+                print(f"  - Business: '{business}' | Name: '{first}' '{last}' | Email: '{email}'")
         
         df = df[~excluded_mask].copy()
         print(f"Continuing with {len(df)} rows after exclusions")
@@ -582,16 +566,16 @@ def upload_file():
             csv2.seek(0)
             zf.writestr("mapping_people_manual.csv", csv2.getvalue())
 
-            # Add excluded persons report if any were excluded
+            # Add excluded emails report if any were excluded
             if not excluded_rows.empty:
-                excluded_summary = excluded_rows[["שם העסק", "שם", "משפחה", "תיאור התשלום"]].copy()
+                excluded_summary = excluded_rows[["שם העסק", "שם", "משפחה", "אימייל", "תיאור התשלום"]].copy()
                 excluded_summary["סיבת אי הכללה"] = "שירות משפטי - לא שירות רו״ח"
                 csv3 = io.BytesIO()
                 csv3.write('\ufeff'.encode('utf-8'))
                 excluded_summary.to_csv(csv3, index=False, encoding="utf-8")
                 csv3.seek(0)
-                zf.writestr("excluded_persons.csv", csv3.getvalue())
-                print(f"Added excluded persons report with {len(excluded_rows)} rows")
+                zf.writestr("excluded_emails.csv", csv3.getvalue())
+                print(f"Added excluded emails report with {len(excluded_rows)} rows")
 
         zip_buffer.seek(0)
         print("ZIP file prepared successfully, returning to client")
